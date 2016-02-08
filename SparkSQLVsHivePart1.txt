@@ -1,0 +1,151 @@
+Hi Guys,
+
+I would like to share with you My POC Results of Comparison of 2-Way Join performed in SPARK SQL and Hive. This was done to draw comparison of various Query timings when executed in Spark SQL Vs Hive.The Results are totally based on my own Data and i would like you people to provide your thoughts/feedback on what can be corrected/added in these results.For this Comparison i had 2 text Files contaning good amount of Data where File1 has around 11 Million records and File 2 has 38 Million records.I would be running various aggregate queries,join queries on these two Datasets using Hive and Spark SQL to draw the distinction between SQL timings.
+
+SPARK SQL -->
+Firstly To Start with SPARK SQL i will need to create a HiveContext as that is an entry point into all the Spark SQL functionality.After Creating HiveContext i will load both the files in Spark RDD's.Since i know the schema of my data so used the Case class format for inferring schema of my Data using reflection.
+
+val hivctx = new org.apache.spark.sql.hive.HiveContext(sc)
+import hivctx.implicits._
+case class spark1(seq_no: Int,st_nbr:Int, r_nbr:Int, ff_nbr:Int, pl_nbr:Int, pyr_id:String,dd_dt:String,card_id:String);
+//Loading Input Data in Spark RDD's
+val input1 = sc.textFile("path to my 1st Text file")
+//Creating DataFrame from RDD by Applying Schema
+val out1 = input1.map(x => x.split(",")).map(y => spark1(y(0).toInt,y(1).toInt,y(2).toInt,y(3).toInt,y(4).toInt,y(5),y(6),y(7))).toDF()
+//Registering DataFrame as Temp Table
+out1.registerTempTable("spark1")
+Input 2->
+case class spark2(seq_no: Int,tx_nbr:Int,st_nbr:Int,dd_dt:String,cm_seq:String,rmt_seq:String)
+//Loading Input Data in Spark RDD's
+val input2 = sc.textFile("path to my 2nd Text file")
+//Creating DataFrame from RDD by Applying Schema
+val out2 = input2.map(x => x.split(",")).map(y => spark2(y(0).toInt,y(1).toInt,y(2).toInt,y(3),y(4),y(5))).toDF()
+//Registering DataFrame as Temp Table
+out2.registerTempTable("spark2")
+Above lines will load files containing Data in form of SPARK RDD's,create Case class for schema inference and register those DataFrames as Temporary Tables.
+Now Since we have loaded all our Data in Spark so we are good to run some SQL queries on our loaded data.
+
+Query 1->
+
+1) Finding Count of Different Temp Tables 
+hivctx.sql("select count(1) from spark1").collect().foreach(println) -- 11 Million
+Time Taken --> 3.046950 s
+
+hivctx.sql("select count(1) from spark2").collect().foreach(println) --38 Million
+Time Taken --> 4.2 Seconds
+
+Query 2->
+Finding Aggregated Data from Both Tables after Joining them.
+
+GroupBy and Join ->
+hivctx.sql("select a.st_nbr,count(1) as cnt from spark1 a, spark2 b where a.seq_no=b.seq_no group by a.st_nbr").take(10)
+Time Taken -->
+16/02/08 11:56:00 INFO DAGScheduler: Job 1 finished: take at <console>:27, took 18.156961 s
+
+Above query took around 18 seconds to find output of count of Grouped Records after joininig two tables of 11 Million and 38 Million Records resp.
+
+
+
+
+Query 3->
+
+3) Fetching coulumns from Both Tables.
+
+
+hivctx.sql("select a.st_nbr, b.st_nbr, a.r_nbr,b.dd_dt from spark1 a, spark2 b where a.seq_no=b.seq_no").take(10)
+Took 15.019813 s
+
+
+Query 4 ->
+
+Fetching Counts of Join Operations --> Took 15 Seconds ( Count is 38 Million)
+
+scala> val out = hivctx.sql("select count(*) as cnt from spark1 a, spark2 b where a.clm_Seq = b.clm_seq")
+
+Above Results shows timings of different SQL Operations when ran using Spark SQL.I ran the same SQL operations using Hive as well by creating 2 External Tables in  hive and loading the same data in those tables.
+
+
+HIVE -->
+
+
+Please Note that Tables are Hive External tables and they point to Data stored in HDFS. Data in these tables is only for 1 month i.e. total count.
+
+For hive shell i have set up below mentioned performance parameters for optimized query execution timings.
+
+Hive Parameters -->
+
+set hive.optimize.ppd=true;
+set hive.vectorized.execution.enabled = true;
+set hive.vectorized.execution.reduce.enabled = true;
+set hive.cbo.enable=true;
+set hive.compute.query.using.stats=true;
+set hive.stats.fetch.column.stats=true;
+set hive.stats.fetch.partition.stats=true;
+set hive.execution.engine=tez;
+
+
+1) Finding Count of Different Tables 
+
+hive> select count(1) from spark1;
+
+11 Million
+Time taken: 15.072 seconds, Fetched: 1 row(s)
+
+hive> select count(1) from spark2;
+
+OK
+38 Million
+Time taken: 13.394 seconds, Fetched: 1 row(s)
+
+
+2)
+
+Finding Aggregated Data from Both Tables after Joining them.
+
+GroupBy and Join ->
+
+
+Query 2 -->
+
+select a.st_nbr,count(1) as cnt from spark1 a, spark2 b where a.seq_no = b.seq_no group by a.st_nbr;
+
+
+This query could not even complete on my data. Query got stuck at 32% after Map1 Tasks are complete. I have to kill the query after 1300 Seconds.
+
+
+3)
+Fetching coulumns from Both Tables.
+
+Query 3 -->
+
+select a.* from spark1 a, spark2 b where a.seq_no=b.seq_no;
+
+Output -->
+
+Not able to complete
+
+
+
+Query 4 -->
+
+Fetching Count of Join Operations
+
+Took 1066.9 Seconds
+
+hive> select count(*) as cnt from spark1 a, spark2 b where a.seq_no=b.seq_no;
+OK
+38053474
+Time taken: 1072.366 seconds, Fetched: 1 row(s)
+
+
+Above Results shows timings of same SQL queries when ran on Hive Tables.Spark SQL Operations return results much faster than Hive Query Operations.
+
+Thanks for reading. Please provide your thoughts/feedback.
+
+Thanks
+Rahul
+
+
+
+
+ 

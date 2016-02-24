@@ -1,6 +1,15 @@
-Hi Guys,
+Hi,
 
 I would like to share with you My POC Results of Comparison of 2-Way Join performed in SPARK SQL and Hive. This was done to draw comparison of various Query timings when executed in Spark SQL Vs Hive.The Results are totally based on my own Data and i would like you people to provide your thoughts/feedback on what can be corrected/added in these results.For this Comparison i had 2 text Files contaning good amount of Data where File1 has around 11 Million records and File 2 has 38 Million records.I would be running various aggregate queries,join queries on these two Datasets using Hive and Spark SQL to draw the distinction between SQL timings.
+
+
+Before Starting I would mention Configuration of my spark shell as below
+
+spark-shell --master yarn-client --executor-memory 4g --num-executors 4 --driver-memory 5g --jars /home/rgulati/spark_jars/commons-csv-1.2.jar,/home/rgulati/spark_jars/spark-csv_2.10-1.0.0.jar
+
+I have included two csv jars as well to see the comparison timings through Spark CSV library as well.
+
+
 
 SPARK SQL -->
 Firstly To Start with SPARK SQL i will need to create a HiveContext as that is an entry point into all the Spark SQL functionality.After Creating HiveContext i will load both the files in Spark RDD's.Since i know the schema of my data so used the Case class format for inferring schema of my Data using reflection.
@@ -9,15 +18,16 @@ val hivctx = new org.apache.spark.sql.hive.HiveContext(sc)
 import hivctx.implicits._
 case class spark1(seq_no: Int,st_nbr:Int, r_nbr:Int, ff_nbr:Int, pl_nbr:Int, pyr_id:String,dd_dt:String,card_id:String);
 //Loading Input Data in Spark RDD's
-val input1 = sc.textFile("path to my 1st Text file")
+val input1 = sc.textFile("/user/rgulati/claim_spark1/merged_claim_spark.txt")
 //Creating DataFrame from RDD by Applying Schema
 val out1 = input1.map(x => x.split(",")).map(y => spark1(y(0).toInt,y(1).toInt,y(2).toInt,y(3).toInt,y(4).toInt,y(5),y(6),y(7))).toDF()
 //Registering DataFrame as Temp Table
 out1.registerTempTable("spark1")
+
 Input 2->
 case class spark2(seq_no: Int,tx_nbr:Int,st_nbr:Int,dd_dt:String,cm_seq:String,rmt_seq:String)
 //Loading Input Data in Spark RDD's
-val input2 = sc.textFile("path to my 2nd Text file")
+val input2 = sc.textFile("/user/rgulati/claim_transaction_spark/part-m-00000")
 //Creating DataFrame from RDD by Applying Schema
 val out2 = input2.map(x => x.split(",")).map(y => spark2(y(0).toInt,y(1).toInt,y(2).toInt,y(3),y(4),y(5))).toDF()
 //Registering DataFrame as Temp Table
@@ -29,10 +39,10 @@ Query 1->
 
 1) Finding Count of Different Temp Tables 
 hivctx.sql("select count(1) from spark1").collect().foreach(println) -- 11 Million
-Time Taken --> 3.046950 s
+Time Taken --> took 6.859341 s
 
 hivctx.sql("select count(1) from spark2").collect().foreach(println) --38 Million
-Time Taken --> 4.2 Seconds
+Time Taken --> took 10.574794 s
 
 Query 2->
 Finding Aggregated Data from Both Tables after Joining them.
@@ -40,7 +50,8 @@ Finding Aggregated Data from Both Tables after Joining them.
 GroupBy and Join ->
 hivctx.sql("select a.st_nbr,count(1) as cnt from spark1 a, spark2 b where a.seq_no=b.seq_no group by a.st_nbr").take(10)
 Time Taken -->
-16/02/08 11:56:00 INFO DAGScheduler: Job 1 finished: take at <console>:27, took 18.156961 s
+16/02/08 11:56:00 INFO DAGScheduler: Job 1 finished: take at <console>:27, took 17.784503 s
+
 
 Above query took around 18 seconds to find output of count of Grouped Records after joininig two tables of 11 Million and 38 Million Records resp.
 
@@ -53,16 +64,19 @@ Query 3->
 
 
 hivctx.sql("select a.st_nbr, b.st_nbr, a.r_nbr,b.dd_dt from spark1 a, spark2 b where a.seq_no=b.seq_no").take(10)
-Took 15.019813 s
+took 14.762329 s
 
 
 Query 4 ->
 
 Fetching Counts of Join Operations --> Took 15 Seconds ( Count is 38 Million)
 
-scala> val out = hivctx.sql("select count(*) as cnt from spark1 a, spark2 b where a.clm_Seq = b.clm_seq")
+scala> val out = hivctx.sql("select count(*) as cnt from spark1 a, spark2 b where a.seq_no = b.seq_no")
+
+took 15.633360 s
 
 Above Results shows timings of different SQL Operations when ran using Spark SQL.I ran the same SQL operations using Hive as well by creating 2 External Tables in  hive and loading the same data in those tables.
+
 
 
 HIVE -->
@@ -138,7 +152,70 @@ OK
 Time taken: 1072.366 seconds, Fetched: 1 row(s)
 
 
-Above Results shows timings of same SQL queries when ran on Hive Tables.Spark SQL Operations return results much faster than Hive Query Operations.
+Spark CSV Library -->
+
+
+val hivctx = new org.apache.spark.sql.hive.HiveContext(sc)
+import hivctx.implicits._
+
+Schema for both the files
+
+scala> val schema = StructType(StructField("seq_no",IntegerType,true),StructField("st_nbr",IntegerType,true),StructField("r_nbr",IntegerType,true),StructField("ff_nbr",IntegerType,true),StructField("pl_nbr",IntegerType,true),StructField("pyr_id",StringType,true),StructField("dd_dt",StringType,true),StructField("card_id",StringType,true))
+
+scala> val schema2 = StructType(List(StructField("seq_no",StringType,true),StructField("tx_nbr",StringType,true),StructField("st_nbr",StringType,true),StructField("dd_dt",StringType,true),StructField("cm_seq",StringType,true),StructField("rmt_seq",StringType,true)))
+schema2: org.apache.spark.sql.types.StructType = StructType(StructField(seq_no,StringType,true), StructField(tx_nbr,StringType,true), StructField(st_nbr,StringType,true), StructField(dd_dt,StringType,true), StructField(cm_seq,StringType,true), StructField(rmt_seq,StringType,true))
+
+
+scala> val inputdf = hivctx.read.format("com.databricks.spark.csv").schema(schema).load("/user/rgulati/claim_spark1/merged_claim_spark.csv")
+scala> val input2df = hivctx.read.format("com.databricks.spark.csv").schema(schema2).load("/user/rgulati/claim_transaction_spark/claim_transaction_spark.csv")
+
+
+scala> inputdf.registerTempTable("spark1")
+scala> input2df.registerTempTable("spark2")
+
+
+1) Finding Count of Different Temp Tables 
+hivctx.sql("select count(1) from spark1").collect().foreach(println) -- 11 Million
+took took 18.845865 s
+
+hivctx.sql("select count(1) from spark2").collect().foreach(println) --38 Million
+Time Taken --> took 33.718677 s
+
+Query 2->
+Finding Aggregated Data from Both Tables after Joining them.
+
+GroupBy and Join ->
+hivctx.sql("select a.st_nbr,count(1) as cnt from spark1 a, spark2 b where a.seq_no=b.seq_no group by a.st_nbr").take(10)
+Time Taken -->
+16/02/08 11:56:00 INFO DAGScheduler: Job 1 finished: take at <console>:27, took took 51.668603 s
+
+
+Above query took around 18 seconds to find output of count of Grouped Records after joininig two tables of 11 Million and 38 Million Records resp.
+
+
+
+
+Query 3->
+
+3) Fetching coulumns from Both Tables.
+
+
+hivctx.sql("select a.st_nbr, b.st_nbr, a.r_nbr,b.dd_dt from spark1 a, spark2 b where a.seq_no=b.seq_no").take(10)
+took  45.978650 s
+
+
+Query 4 ->
+
+Fetching Counts of Join Operations --> Took 15 Seconds ( Count is 38 Million)
+
+scala> val out = hivctx.sql("select count(*) as cnt from spark1 a, spark2 b where a.seq_no = b.seq_no")
+
+took 52.920042 s
+
+
+Above Results shows timings of different SQL Operations when ran using Spark CSV Dataframes.
+
+You can easily see the timing differences between different approaches.
 
 Thanks for reading. Please provide your thoughts/feedback.
 
